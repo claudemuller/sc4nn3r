@@ -7,18 +7,27 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
+
+type target struct {
+	host  string
+	port  int
+	proto string
+}
 
 func main() {
 	var host string
 	var portStr string
 	var proto string
+	var threads int
 
 	flag.StringVar(&host, "host", "", "the host to scan")
 	flag.StringVar(&portStr, "ports", "1-1024", "the port(s) or range of ports to scan")
 	flag.StringVar(&proto, "proto", "tcp", "the proto to use for the scan")
+	flag.IntVar(&threads, "threads", 100, "the number of \"threads\" i.e. goroutines to use")
 
 	flag.Parse()
 
@@ -32,31 +41,87 @@ func main() {
 		log.Fatalf("error parsing ports: %v\n", err)
 	}
 
+	if err := printHeader(); err != nil {
+		log.Fatalf("error printing banner: %v", err)
+	}
 	log.Printf("[+] Beginning scan on: %s\n", host)
+	log.Printf("[+] Scanning %d ports\n", len(ports))
+	log.Printf("[+] Using %d goroutines\n", threads)
+	log.Println("[+] -------------------------------------------------------------------")
 
-	for _, port := range ports {
-		p := strconv.Itoa(port)
+	results := make(chan int)
+	workQ := make(chan target, threads)
 
-		conn, err := net.Dial(proto, host+":"+p)
+	// Start up workers, each consuming from the workQ(ueue)
+	for i := 0; i < cap(workQ); i++ {
+		go worker(workQ, results)
+	}
+
+	// Fill the workQ(ueue) with ports to scan
+	go func() {
+		for _, port := range ports {
+			workQ <- target{
+				host:  host,
+				port:  port,
+				proto: proto,
+			}
+		}
+	}()
+
+	var openPorts []int
+
+	for i := 0; i < len(ports); i++ {
+		p := <-results
+		if p != 0 {
+			openPorts = append(openPorts, p)
+		}
+	}
+
+	// Shutdown workers
+	close(workQ)
+	close(results)
+
+	sort.Ints(openPorts)
+	for _, p := range openPorts {
+		log.Printf("[+] Open port: %d\n", p)
+	}
+
+	log.Println("[+] -------------------------------------------------------------------")
+	log.Printf("[+] Found %d open ports\n", len(openPorts))
+}
+
+func worker(tangos chan target, results chan int) {
+	for tango := range tangos {
+		p := strconv.Itoa(tango.port)
+
+		conn, err := net.Dial(tango.proto, tango.host+":"+p)
 		if err != nil {
-			// TODO: clean this up
-			if ne, ok := err.(*net.OpError); ok {
-				if e, ok := (ne.Err).(*os.SyscallError); ok {
-					if e.Syscall == "connect" && e.Err.Error() == "connection refused" {
-						log.Printf("[-] Closed port: %s\n", p)
-						continue
-					}
-				}
+			if handlePortClosed(err, p) {
+				results <- 0
+				continue
 			}
 
+			// TODO: Send errors on error channel
 			log.Printf("error creating connection: %T %v\n", err, err)
+			results <- 0
 			continue
 		}
 
 		conn.Close()
-
-		log.Printf("[+] Open port: %s\n", p)
+		results <- tango.port
 	}
+}
+
+func handlePortClosed(err error, port string) bool {
+	if ne, ok := err.(*net.OpError); ok {
+		if e, ok := (ne.Err).(*os.SyscallError); ok {
+			if e.Syscall == "connect" && e.Err.Error() == "connection refused" {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func parsePorts(portStr string) ([]int, error) {
@@ -110,4 +175,15 @@ func parsePorts(portStr string) ([]int, error) {
 
 		return []int{p}, nil
 	}
+}
+
+func printHeader() error {
+	data, err := os.ReadFile("banner.txt")
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s\n", data)
+
+	return nil
 }
