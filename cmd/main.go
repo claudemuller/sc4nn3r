@@ -1,22 +1,14 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"sort"
-	"strconv"
-	"strings"
-)
 
-type target struct {
-	host  string
-	port  int
-	proto string
-}
+	"github.com/claudemuller/scanner/internal/pkg/scanner"
+)
 
 func main() {
 	var host string
@@ -36,7 +28,7 @@ func main() {
 		return
 	}
 
-	ports, err := parsePorts(portStr)
+	ports, err := scanner.ParsePorts(portStr)
 	if err != nil {
 		log.Fatalf("error parsing ports: %v\n", err)
 	}
@@ -50,20 +42,20 @@ func main() {
 	log.Println("[+] -------------------------------------------------------------------")
 
 	results := make(chan int)
-	workQ := make(chan target, threads)
+	workQ := make(chan scanner.Target, threads)
 
 	// Start up workers, each consuming from the workQ(ueue)
 	for i := 0; i < cap(workQ); i++ {
-		go worker(workQ, results)
+		go scanner.Worker(workQ, results)
 	}
 
 	// Fill the workQ(ueue) with ports to scan
 	go func() {
 		for _, port := range ports {
-			workQ <- target{
-				host:  host,
-				port:  port,
-				proto: proto,
+			workQ <- scanner.Target{
+				Host:  host,
+				Port:  port,
+				Proto: proto,
 			}
 		}
 	}()
@@ -88,93 +80,6 @@ func main() {
 
 	log.Println("[+] -------------------------------------------------------------------")
 	log.Printf("[+] Found %d open ports\n", len(openPorts))
-}
-
-func worker(tangos chan target, results chan int) {
-	for tango := range tangos {
-		p := strconv.Itoa(tango.port)
-
-		conn, err := net.Dial(tango.proto, tango.host+":"+p)
-		if err != nil {
-			if handlePortClosed(err, p) {
-				results <- 0
-				continue
-			}
-
-			// TODO: Send errors on error channel
-			log.Printf("error creating connection: %T %v\n", err, err)
-			results <- 0
-			continue
-		}
-
-		conn.Close()
-		results <- tango.port
-	}
-}
-
-func handlePortClosed(err error, port string) bool {
-	if ne, ok := err.(*net.OpError); ok {
-		if e, ok := (ne.Err).(*os.SyscallError); ok {
-			if e.Syscall == "connect" && e.Err.Error() == "connection refused" {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func parsePorts(portStr string) ([]int, error) {
-	switch {
-	case strings.Contains(portStr, "-"):
-		// Port format: 80-100
-		pRange := strings.Split(portStr, "-")
-
-		min, err := strconv.Atoi(pRange[0])
-		if err != nil {
-			return nil, fmt.Errorf("error determining min port range value: %v", err)
-		}
-
-		max, err := strconv.Atoi(pRange[1])
-		if err != nil {
-			return nil, fmt.Errorf("error determining max port range value: %v", err)
-		}
-
-		ports := make([]int, 0, max-min+1)
-
-		for i := min; i <= max; i++ {
-			ports = append(ports, i)
-		}
-
-		return ports, nil
-
-	case strings.Contains(portStr, ","):
-		// Port format: 25,80,443
-		portStrs := strings.Split(portStr, ",")
-		ports := make([]int, 0, len(portStrs))
-
-		for _, p := range portStrs {
-			port, err := strconv.Atoi(p)
-			if err != nil {
-				return nil, fmt.Errorf("error parsing port string value: %v", err)
-			}
-			ports = append(ports, port)
-		}
-
-		return ports, nil
-
-	default:
-		p, err := strconv.Atoi(portStr)
-		if err != nil {
-			return nil, err
-		}
-
-		if p == 0 {
-			return nil, errors.New("invalid port")
-		}
-
-		return []int{p}, nil
-	}
 }
 
 func printHeader() error {
