@@ -17,7 +17,7 @@ func main() {
 	var proto string
 
 	flag.StringVar(&host, "host", "", "the host to scan")
-	flag.StringVar(&portStr, "ports", "", "the ports to scan")
+	flag.StringVar(&portStr, "ports", "1-1024", "the port(s) or range of ports to scan")
 	flag.StringVar(&proto, "proto", "tcp", "the proto to use for the scan")
 
 	flag.Parse()
@@ -62,6 +62,7 @@ func main() {
 func parsePorts(portStr string) ([]int, error) {
 	switch {
 	case strings.Contains(portStr, "-"):
+		// Port format: 80-100
 		pRange := strings.Split(portStr, "-")
 
 		min, err := strconv.Atoi(pRange[0])
@@ -83,6 +84,7 @@ func parsePorts(portStr string) ([]int, error) {
 		return ports, nil
 
 	case strings.Contains(portStr, ","):
+		// Port format: 25,80,443
 		portStrs := strings.Split(portStr, ",")
 		ports := make([]int, 0, len(portStrs))
 

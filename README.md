@@ -17,7 +17,7 @@ go build cmd/main.go
 | param | description | default | example |
 |---|---|---|---|
 | `-host` | the host to scan | | `127.1` |
-| `-port` | the port to scan | | `1337` |
+| `-ports` | the port(s) or range of ports to scan | `1-1024` | `1337` |
 | `-proto` | the protocol to use when scanning | `tcp` | `tcp` |
 
 ```bash
